@@ -1,4 +1,4 @@
-/* 
+/*
  * CS:APP Data Lab 
  * 
  * <Please put your name and userid here>
@@ -134,7 +134,7 @@ NOTES:
 
 
 #endif
-//1
+//
 /* 
  * bitXor - x^y using only ~ and & 
  *   Example: bitXor(4, 5) = 1
@@ -143,7 +143,7 @@ NOTES:
  *   Rating: 1
  */
 int bitXor(int x, int y) {
-  return (~(x&~y))&(~(~x&y));
+    return ~(~x&~y)&~(x&y);
 }
 /* 
  * tmin - return minimum two's complement integer 
@@ -167,6 +167,9 @@ int tmin(void) {
 int isTmax(int x) {
   int i = x+1;
   x = x+i;
+  x=~x;//0,0000...
+  i=!i;//exclude x=0xffff...
+  x=x+i;//exclude x=0xffff...
   return !x;
 }
 /* 
@@ -204,13 +207,13 @@ int negate(int x) {
  */
 int isAsciiDigit(int x) {
     // 判断是否大于0x30或者小于0x39即可
-    int Tmax = 2 <<31;
+    int Tmax = 0x7fffffff;
     int sign1 = 0x30;
     int sign2 = 0x39;
     int x_ = (~x+1);
-    int uperbound = Tmax + sign2 + x_;  //判断溢出 (大于0x39)
-    int lowerbound = Tmax + ~sign2 + 1+ x;  //(小于0x30)
-  return !((uperbound)>>31 | (lowerbound)>>31); //判断符号位
+    int uperbound = Tmax + sign1 + x_;  //判断溢出 (小于0x30)
+    int lowerbound = Tmax + ~sign2 + 1 + x;  //(小于0x39)
+  return !((uperbound)>>31&(0x1) | (lowerbound)>>31&(0x1)); //判断符号位
 }
 /* 
  * conditional - same as x ? y : z 
@@ -232,8 +235,16 @@ int conditional(int x, int y, int z) {
  *   Rating: 3
  */
 int isLessOrEqual(int x, int y) {
-    int res = x + ~y+ 1;  //x-y
-  return (res<<31)|~(res & 0);
+    int negX=~x+1;//-x
+    int addX=negX+y;//y-x
+    int checkSign = addX>>31&0x1; //y-x的符号
+    int leftBit = 0x1<<31;//最大位为1的32位有符号数
+    int xLeft = x&leftBit;//x的符号
+    int yLeft = y&leftBit;//y的符号
+    int bitXor = xLeft ^ yLeft;//x和y符号相同标志位，相同为0不同为1
+    bitXor = (bitXor>>31)&1;//符号相同标志位格式化为0或1
+    return ((!bitXor)&(!checkSign))|(bitXor&(xLeft>>31));
+    //返回1有两种情况：符号相同标志位为0（相同）位与 y-x 的符号为0（y-x>=0）结果为1；符号相同标志位为1（不同）位与x的符号位为1（x<0）
 }
 //4
 /* 
@@ -245,7 +256,7 @@ int isLessOrEqual(int x, int y) {
  *   Rating: 4 
  */
 int logicalNeg(int x) {
-  return (x|(~x+1)>>31)+1;
+  return ((x|(~x+1))>>31)+1;
   //除了0外，相反数或均为111111...
 
 }
@@ -264,18 +275,18 @@ int logicalNeg(int x) {
 int howManyBits(int x) {
     int b16,b8,b4,b2,b1,b0;
     int sign = x>>31;
-    x = sign ^ x;  //x>0则保持不变 x<0 x按位取反
+    x = (sign&~x)|(~sign&x);  //x>0则保持不变 x<0 x按位取反
     //判断高16位有无1，如果有，则至少需要16位
     b16 = !!(x>>16)<<4;
-    x >> b16;
+    x = x >> b16;
     b8 = !!(x>>8)<<3;
-    x >> b8;
+    x = x >> b8;
     b4 = !!(x>>4)<<2;
-    x >> b4;
+    x = x >> b4;
     b2 = !!(x>>2)<<1;
-    x >> b2;
+    x = x >> b2;
     b1 = !!(x>>1);
-    x >> b1;
+    x = x >> b1;
     b0 = x;
   return (b16+b8+b4+b2+b1+b0+1);
 }
@@ -292,14 +303,16 @@ int howManyBits(int x) {
  *   Rating: 4
  */
 unsigned floatScale2(unsigned uf) {
-    int exp = (uf&0x7f8000000)>>23;
-    int sign = uf&(1<<31);
-    if(exp == 0) return uf<<1|sign;
-    else if(exp == 255) return uf;
-    exp++; //乘2
-    if(exp==255) return 0x7f8000000|sign;
-    return (exp<<23)|0x7f8000000;
+    int exp = (uf&0x7f800000)>>23;
+    int sign = uf&(1<<31);  //符号位
+    if(exp==0) return uf<<1|sign; //阶码部分为0,说明是非规格化数，无穷小或者0
+    if(exp==255) return uf; //阶码部分为255，说明是无穷大或者NaN
+    exp++; //执行乘2操作
+    if(exp==255) return 0x7f800000|sign;
+    return (exp<<23)|(uf&0x807fffff);
 }
+//32位浮点数1+8+23， 64位浮点数1+11+52
+
 /* 
  * floatFloat2Int - Return bit-level equivalent of expression (int) f
  *   for floating point argument f.
@@ -313,7 +326,21 @@ unsigned floatScale2(unsigned uf) {
  *   Rating: 4
  */
 int floatFloat2Int(unsigned uf) {
-  return 2;
+    //将一个浮点数转换为整数，需要考虑的情况有：
+    int s_    = uf>>31;  //符号位
+    int exp_  = ((uf&0x7f800000)>>23)-127;  //阶码
+    int frac_ = (uf&0x007fffff)|0x00800000;  //尾数
+    if(!(uf&0x7fffffff)) return 0;  //如果是0，直接返回0
+
+    if(exp_ > 31) return 0x80000000;  //如果指数大于31，溢出
+    if(exp_ < 0) return 0; //如果指数小于0，返回0
+
+    if(exp_ > 23) frac_ <<= (exp_-23);
+    else frac_ >>= (23-exp_);
+
+    if(!((frac_>>31)^s_)) return frac_;  //如果符号相同，返回
+    else if(frac_>>31) return 0x80000000;  //如果是负数，溢出
+    else return ~frac_+1;  //如果是正数，取反加1（相反数）
 }
 /* 
  * floatPower2 - Return bit-level equivalent of the expression 2.0^x
@@ -329,5 +356,10 @@ int floatFloat2Int(unsigned uf) {
  *   Rating: 4
  */
 unsigned floatPower2(int x) {
-    return 2;
+    //将一个2.0^x转换为浮点数
+    int INF = 0xff << 23;  //无穷大
+    int exp = x + 127;  //阶码
+    if(exp <= 0) return 0;  //如果阶码小于等于0，返回0
+    if(exp >= 255) return INF;  //如果阶码大于等于255，返回无穷大
+    return exp << 23;  //返回阶码
 }
